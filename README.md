@@ -317,6 +317,78 @@ For one-off runs with `uvx`, use `--from` as shown above.
 > On Windows PowerShell and on macOS zsh, quote the brackets to prevent
 > shell glob expansion: `pip install -e ".[dev]"`.
 
+### Browser GUI in an SBX sandbox
+
+The desktop GUI can run inside a Linux SBX sandbox and be controlled from a
+browser using Xvfb, x11vnc, and noVNC. This setup uses software rendering and
+does not require a desktop display on the host.
+
+Run the following **inside the sandbox**, from the repository directory.
+Install the Ubuntu system packages and Python environment once:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y xvfb x11-utils x11vnc novnc websockify openbox \
+  libglib2.0-0t64 libegl1 libgl1 libgl1-mesa-dri libdbus-1-3 \
+  libfreetype6 libfontconfig1 fonts-dejavu-core libxkbcommon-x11-0 \
+  libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0
+uv venv --python 3.13 .venv
+uv pip install --python .venv/bin/python -e .
+```
+
+Start the virtual desktop and browser connection, then launch the app. Run
+these once per sandbox session; leave the terminal running while using the GUI:
+
+```bash
+Xvfb :99 -screen 0 1600x1000x24 -ac -nolisten tcp > /tmp/spektrafilm-xvfb.log 2>&1 &
+export DISPLAY=:99
+export QT_QPA_PLATFORM=xcb
+export LIBGL_ALWAYS_SOFTWARE=1
+
+# Wait for the virtual display before starting its clients.
+until xdpyinfo -display :99 > /dev/null 2>&1; do sleep 1; done
+
+openbox > /tmp/spektrafilm-openbox.log 2>&1 &
+env -u WAYLAND_DISPLAY x11vnc -display :99 -localhost -rfbport 5900 \
+  -nopw -forever -shared > /tmp/spektrafilm-vnc.log 2>&1 &
+websockify --web /usr/share/novnc 6080 localhost:5900 \
+  > /tmp/spektrafilm-browser.log 2>&1 &
+.venv/bin/spektrafilm
+```
+
+`QT_QPA_PLATFORM=xcb` selects the virtual X display. Unsetting `WAYLAND_DISPLAY`
+for x11vnc prevents it from attempting to capture the sandbox's Wayland display.
+If startup fails, check the logs in `/tmp/spektrafilm-*.log`.
+
+In a **host terminal**, publish the browser port:
+
+```bash
+sbx ports codex-spektrafilm --publish 127.0.0.1:6080:6080/tcp
+```
+
+`codex-spektrafilm` is the sandbox name used for this setup; replace it with
+your sandbox's name if different (`hostname` inside the sandbox shows the name).
+If port 6080 is already published for this sandbox, open the existing link.
+If another app uses host port 6080, publish `127.0.0.1:6081:6080/tcp` instead
+and use port 6081 in the browser URL.
+
+Open <http://localhost:6080/vnc.html?autoconnect=true&resize=scale> to interact
+with the GUI. The connection has no password, so keep the host binding on
+`127.0.0.1`; port 5900 does not need to be published.
+
+To process a JPEG, use **MAIN → import rgb** to choose the image, then set
+**input color space** to **sRGB** and enable **apply CCTF decoding** for a
+standard sRGB JPEG. The sample used for this setup is
+`notes/inputs/IMG_5173.jpg`, if present in your workspace. Enable **auto preview**
+to see changes as you adjust the controls.
+
+To export, click **SCAN** and wait for the full-resolution render, then click
+**SAVE**. Use a new filename ending in `.jpg` for sharing or `.tif` for further
+editing. Files save to the sandbox filesystem; choose a directory in the
+shared project workspace to access them from the host. **SAVE** writes the
+current output, so run **SCAN** again after changing settings to export a
+full-resolution result with those changes.
+
 ## Testing
 
 Install the default package plus the dev tooling, then run the test suite:
